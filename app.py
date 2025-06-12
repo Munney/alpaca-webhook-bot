@@ -59,7 +59,7 @@ def webhook():
                 "time_in_force": "gtc"
             }
             alpaca_response = requests.post(
-                f"{ALPACA_BASE_URL}/v2/orders",
+                f"{ALPACA_BASE_URL}/orders",
                 json=order_payload,
                 headers={
                     "APCA-API-KEY-ID": "PKDYG000ARPL9C625NQD",
