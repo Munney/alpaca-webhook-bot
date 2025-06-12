@@ -37,27 +37,19 @@ def webhook():
         action = data["alert"].lower()
         price = float(data["price"])
 
-        # === Determine trade side ===
-        if "long entry" in action:
-            side = "Buy"
-        elif "short entry" in action:
-            side = "Sell"
-        elif "exit" in action:
-            side = "Exit"
-        else:
-            side = "Unknown"
-
         # === Send to Google Sheets ===
         gs_payload = {
             "ticker": ticker,
             "timeframe": data["timeframe"],
             "strategy": data["version"],
             "type": data["alert"],
-            "price": str(price),
-            "side": side
+            "price": str(price)
         }
-        requests.post(GOOGLE_SHEETS_WEBHOOK_URL, json=gs_payload)
+        gs_response = requests.post(GOOGLE_SHEETS_WEBHOOK_URL, json=gs_payload)
+        print(f"📤 Google Sheets response: {gs_response.status_code} - {gs_response.text}")  # <-- this line
+
         print("✅ Sent to Google Sheets.")
+        return jsonify({"status": "sent to Google Sheets"}), 200
 
         # === Prepare Alpaca Order ===
         if action in ["long entry", "short entry"]:
