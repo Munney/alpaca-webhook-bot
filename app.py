@@ -62,8 +62,8 @@ def webhook():
                 f"{ALPACA_BASE_URL}/v2/orders",
                 json=order_payload,
                 headers={
-                    "APCA-API-KEY-ID": PKDYG000ARPL9C625NQD,
-                    "APCA-API-SECRET-KEY": Nn9uKqzFbFfqaxXgyXkCLrlETfF1DMN6STNvX4jG
+                    "APCA-API-KEY-ID": "PKDYG000ARPL9C625NQD",
+                    "APCA-API-SECRET-KEY": "Nn9uKqzFbFfqaxXgyXkCLrlETfF1DMN6STNvX4jG"
                 }
             )
             alpaca_response.raise_for_status()
