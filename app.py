@@ -5,7 +5,7 @@ import os
 app = Flask(__name__)
 
 # === Google Sheets Webhook URL ===
-GOOGLE_SHEETS_WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbx-SO8QlqurzYSDtaCu0NtofAXzXyi0aZ6TtcnJhp_5tDtCf3iEvJ4Z7ikTcP8kqzg8/exec"
+GOOGLE_SHEETS_WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbwW8sH2-_tAd3zF--4Ddc6OdB5EQ6D0H3ZPlKY4h5_iWM0hMc8VDE4ExOCW2oLG0zqx/exec"
 
 # === Alpaca API Keys (Paper or Live) ===
 ALPACA_API_KEY = "PKDYG000ARPL9C625NQD"
@@ -58,7 +58,7 @@ def webhook():
         }
         requests.post(GOOGLE_SHEETS_WEBHOOK_URL, json=gs_payload)
         print("✅ Sent to Google Sheets.")
-        
+
         # === Prepare Alpaca Order ===
         if action in ["long entry", "short entry"]:
             side = "buy" if action == "long entry" else "sell"
