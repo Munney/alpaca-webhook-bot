@@ -1,16 +1,15 @@
 from flask import Flask, request, jsonify
 import requests
-import os
 
 app = Flask(__name__)
 
 # === Google Sheets Webhook URL ===
-GOOGLE_SHEETS_WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbwW8sH2-_tAd3zF--4Ddc6OdB5EQ6D0H3ZPlKY4h5_iWM0hMc8VDE4ExOCW2oLG0zqx/exec"
+GOOGLE_SHEETS_WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbyXYYuC92u0A59CgEHZnIFW8Jg9-aQMgods2f6AZjt7iIm1v090-Cy5Uuhk0_K6b3X2FQ/exec"
 
-# === Alpaca API Keys (Paper or Live) ===
+# === Alpaca API Keys ===
 ALPACA_API_KEY = "PKDYG000ARPL9C625NQD"
 ALPACA_SECRET_KEY = "Nn9uKqzFbFfqaxXgyXkCLrlETfF1DMN6STNvX4jG"
-ALPACA_BASE_URL = "https://paper-api.alpaca.markets/v2"  # Change to live URL if using real money
+ALPACA_BASE_URL = "https://paper-api.alpaca.markets/v2"
 
 @app.route('/', methods=['GET'])
 def root():
@@ -46,12 +45,9 @@ def webhook():
             "price": str(price)
         }
         gs_response = requests.post(GOOGLE_SHEETS_WEBHOOK_URL, json=gs_payload)
-        print(f"📤 Google Sheets response: {gs_response.status_code} - {gs_response.text}")  # <-- this line
+        print(f"📤 Google Sheets response: {gs_response.status_code} - {gs_response.text}")
 
-        print("✅ Sent to Google Sheets.")
-        return jsonify({"status": "sent to Google Sheets"}), 200
-
-        # === Prepare Alpaca Order ===
+        # === Send order to Alpaca ===
         if action in ["long entry", "short entry"]:
             side = "buy" if action == "long entry" else "sell"
             order_payload = {
@@ -65,21 +61,14 @@ def webhook():
                 f"{ALPACA_BASE_URL}/orders",
                 json=order_payload,
                 headers={
-                    "APCA-API-KEY-ID": "PKDYG000ARPL9C625NQD",
-                    "APCA-API-SECRET-KEY": "Nn9uKqzFbFfqaxXgyXkCLrlETfF1DMN6STNvX4jG"
+                    "APCA-API-KEY-ID": ALPACA_API_KEY,
+                    "APCA-API-SECRET-KEY": ALPACA_SECRET_KEY
                 }
             )
             alpaca_response.raise_for_status()
-            print("✅ Alpaca order placed.")
+            print(f"✅ Alpaca order placed: {side.upper()} {ticker}")
         else:
-            print("ℹ️ Alert received, but not an entry signal. No trade executed.")
+            print("ℹ️ Alert was not an entry signal. No order placed.")
 
-        return jsonify({"status": "Logged and processed"}), 200
-
-    except Exception as e:
-        print(f"❌ Error: {e}")
-        return jsonify({"error": "Failed to process", "details": str(e)}), 400
-
-if __name__ == '__main__':
-    print("🚀 Flask server is starting at http://localhost:5000")
-    app.run(host='0.0.0.0', port=5000)
+        # ✅ Final return AFTER both Sheets + Alpaca logic
+        return json
