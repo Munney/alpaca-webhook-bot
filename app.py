@@ -47,7 +47,7 @@ def webhook():
         gs_response = requests.post(GOOGLE_SHEETS_WEBHOOK_URL, json=gs_payload)
         print(f"📤 Google Sheets response: {gs_response.status_code} - {gs_response.text}")
 
-        # === Send order to Alpaca ===
+        # === Send to Alpaca if entry signal ===
         if action in ["long entry", "short entry"]:
             side = "buy" if action == "long entry" else "sell"
             order_payload = {
@@ -68,7 +68,14 @@ def webhook():
             alpaca_response.raise_for_status()
             print(f"✅ Alpaca order placed: {side.upper()} {ticker}")
         else:
-            print("ℹ️ Alert was not an entry signal. No order placed.")
+            print("ℹ️ No trade sent to Alpaca. Alert was not an entry signal.")
 
-        # ✅ Final return AFTER both Sheets + Alpaca logic
-        return json
+        return jsonify({"status": "Logged and processed"}), 200
+
+    except Exception as e:
+        print(f"❌ Error: {e}")
+        return jsonify({"error": "Failed to process", "details": str(e)}), 400
+
+if __name__ == '__main__':
+    print("🚀 Flask server is starting at http://localhost:5000")
+    app.run(host='0.0.0.0', port=5000)
