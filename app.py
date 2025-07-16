@@ -57,16 +57,22 @@ def webhook():
                 "type": "market",
                 "time_in_force": "gtc"
             }
-            alpaca_response = requests.post(
-                f"{ALPACA_BASE_URL}/orders",
-                json=order_payload,
-                headers={
-                    "APCA-API-KEY-ID": ALPACA_API_KEY,
-                    "APCA-API-SECRET-KEY": ALPACA_SECRET_KEY
-                }
-            )
-            alpaca_response.raise_for_status()
-            print(f"✅ Alpaca order placed: {side.upper()} {ticker}")
+
+            try:
+                alpaca_response = requests.post(
+                    f"{ALPACA_BASE_URL}/orders",
+                    json=order_payload,
+                    headers={
+                        "APCA-API-KEY-ID": ALPACA_API_KEY,
+                        "APCA-API-SECRET-KEY": ALPACA_SECRET_KEY
+                    }
+                )
+                alpaca_response.raise_for_status()
+                print(f"✅ Alpaca order placed: {side.upper()} {ticker}")
+            except requests.exceptions.HTTPError as err:
+                print("❌ Alpaca rejected the order:")
+                print(f"Status Code: {alpaca_response.status_code}")
+                print(f"Response: {alpaca_response.text}")
         else:
             print("ℹ️ No trade sent to Alpaca. Alert was not an entry signal.")
 
