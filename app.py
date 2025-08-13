@@ -8,8 +8,8 @@ app.url_map.strict_slashes = False  # accept /webhook and /webhook/
 # === Config (env first, fallback to placeholders) ===
 ALPACA_API_KEY     = os.getenv("ALPACA_API_KEY",     "YOUR_ALPACA_API_KEY")
 ALPACA_SECRET_KEY  = os.getenv("ALPACA_SECRET_KEY",  "YOUR_ALPACA_SECRET_KEY")
-ALPACA_BASE_URL    = os.getenv("ALPACA_BASE_URL",    "https://paper-api.alpaca.markets")  # live: https://api.alpaca.markets
-GS_WEBHOOK_URL     = os.getenv("GOOGLE_SHEETS_WEBHOOK_URL", "https://script.google.com/macros/s/REPLACE_ME/exec")
+ALPACA_BASE_URL    = os.getenv("ALPACA_BASE_URL",    "https://paper-api.alpaca.markets/v2")  # live: https://api.alpaca.markets
+GS_WEBHOOK_URL     = os.getenv("GOOGLE_SHEETS_WEBHOOK_URL", "https://script.google.com/macros/s/AKfycbyXYYuC92u0A59CgEHZnIFW8Jg9-aQMgods2f6AZjt7iIm1v090-Cy5Uuhk0_K6b3X2FQ/exec")
 
 HEADERS = {
     "APCA-API-KEY-ID": ALPACA_API_KEY,
