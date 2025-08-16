@@ -1,15 +1,17 @@
 from flask import Flask, request, jsonify
 import requests
 import os
+import time
 
 app = Flask(__name__)
 app.url_map.strict_slashes = False  # accept /webhook and /webhook/
 
 # === Config (env first; set these in Render) ===
-ALPACA_API_KEY    = os.getenv("ALPACA_API_KEY",    "YOUR_ALPACA_API_KEY")
-ALPACA_SECRET_KEY = os.getenv("ALPACA_SECRET_KEY", "YOUR_ALPACA_SECRET_KEY")
-ALPACA_BASE_URL   = os.getenv("ALPACA_BASE_URL",   "https://paper-api.alpaca.markets")  # no /v2 here
-GS_WEBHOOK_URL    = os.getenv("GOOGLE_SHEETS_WEBHOOK_URL", "https://script.google.com/macros/s/REPLACE_ME/exec")
+ALPACA_API_KEY       = os.getenv("ALPACA_API_KEY",              "YOUR_ALPACA_API_KEY")
+ALPACA_SECRET_KEY    = os.getenv("ALPACA_SECRET_KEY",           "YOUR_ALPACA_SECRET_KEY")
+ALPACA_BASE_URL      = os.getenv("ALPACA_BASE_URL",             "https://paper-api.alpaca.markets")  # no /v2 here
+GS_WEBHOOK_URL       = os.getenv("GOOGLE_SHEETS_WEBHOOK_URL",   "https://script.google.com/macros/s/REPLACE_ME/exec")
+TRADE_RISK_PERCENT   = float(os.getenv("TRADE_RISK_PERCENT", "1.0")) # Risk 1% of buying power per trade
 
 HEADERS = {
     "APCA-API-KEY-ID": ALPACA_API_KEY,
@@ -32,23 +34,23 @@ def normalize_alert(s: str) -> str:
     if not s:
         return ""
     s = s.replace("_", " ").strip().lower()
-    if s in ("long", "long entry", "entry long"):
+    if s in ("long", "long entry", "entry long", "buy"):
         return "long entry"
-    if s in ("short", "short entry", "entry short"):
+    if s in ("short", "short entry", "entry short", "sell"):
         return "short entry"
     if s in ("exit long", "close long"):
         return "exit long"
     if s in ("exit short", "close short"):
         return "exit short"
-    if s == "exit":
+    if s in ("exit", "close"):
         return "exit"
     return s
 
 def side_for_sheet(action: str) -> str:
     """Side we log to Sheets (READABLE, not the Alpaca side)."""
     return (
-        "BUY"  if action in ("long entry", "exit short") else
-        "SELL" if action in ("short entry", "exit long") else
+        "BUY"   if action in ("long entry", "exit short") else
+        "SELL"  if action in ("short entry", "exit long") else
         "CLOSE" if action == "exit" else "—"
     )
 
@@ -63,21 +65,17 @@ def webhook():
         if not data:
             return jsonify({"status": "error", "message": "Invalid or empty JSON"}), 400
 
-        # Accept either 'ticker' or 'symbol'; accept both 'alert' and 'signal'
+        # === Parse webhook data ===
         symbol    = (data.get("ticker") or data.get("symbol") or "").upper()
         timeframe = str(data.get("timeframe", ""))
         version   = str(data.get("version") or data.get("strategy") or "")
-        price     = str(data.get("price", ""))  # OK as string
-        qty       = int(data.get("qty", 1))
-
+        price_str = str(data.get("price", "0"))
+        signal_id = str(data.get("signal_id", "")) # For idempotency
         alert_raw = (data.get("alert") or data.get("signal") or "").strip()
         action    = normalize_alert(alert_raw)
 
         if not symbol or not action:
-            return jsonify({"status": "error", "message": "Missing ticker/signal"}), 400
-
-        # Side that goes to Sheets (for human readability)
-        sheet_side = side_for_sheet(action)
+            return jsonify({"status": "error", "message": "Missing symbol or alert action"}), 400
 
         # --- Log to Google Sheets (best effort, non-blocking) ---
         try:
@@ -85,9 +83,9 @@ def webhook():
                 "ticker":    symbol,
                 "timeframe": timeframe,
                 "strategy":  version,
-                "type":      action.title(),   # e.g., "Exit Long"
-                "side":      sheet_side,       # BUY/SELL/CLOSE/—
-                "price":     price
+                "type":      action.title(),
+                "side":      side_for_sheet(action),
+                "price":     price_str
             }
             print(f"🧾 gs_payload -> {gs_payload}")
             gs_resp = requests.post(GS_WEBHOOK_URL, json=gs_payload, timeout=10)
@@ -95,7 +93,7 @@ def webhook():
         except Exception as e:
             print(f"⚠️ Sheets log error (non-blocking): {e}")
 
-        # --- Trading logic (Alpaca) ---
+        # === Trading logic (Alpaca) ===
         if action in ("long entry", "short entry"):
             # 1) Account check
             acct = requests.get(f"{ALPACA_BASE_URL}/v2/account", headers=HEADERS, timeout=10)
@@ -105,22 +103,45 @@ def webhook():
             acct_j = acct.json()
             if acct_j.get("status") != "ACTIVE" or acct_j.get("trading_blocked") or acct_j.get("account_blocked"):
                 return jsonify({"status": "error", "message": "Account not allowed to trade", "alpaca": acct.text}), 400
+            
+            # === NEW: Dynamic Quantity Calculation ===
+            try:
+                price = float(price_str)
+                buying_power = float(acct_j.get("buying_power", 0))
+                trade_value = buying_power * (TRADE_RISK_PERCENT / 100.0)
+                if price <= 0:
+                    return jsonify({"status": "error", "message": f"Invalid price for calculation: {price}"}), 400
+                qty = round(trade_value / price, 6) # Fractional shares are supported
+                print(f"💰 Calculated Quantity: {qty} of {symbol} @ ${price} (Risk: {TRADE_RISK_PERCENT}%)")
+            except (ValueError, ZeroDivisionError) as e:
+                print(f"⚠️ Qty calc error: {e}")
+                return jsonify({"status": "error", "message": "Failed to calculate quantity"}), 400
+
+            if qty <= 0:
+                return jsonify({"status": "ok", "message": f"Calculated quantity is {qty}. No order placed."}), 200
+
+            # === NEW: Idempotency Key ===
+            if not signal_id:
+                # Fallback to current timestamp if not provided, but less reliable
+                signal_id = str(int(time.time()))
+                print(f"⚠️ Missing 'signal_id' from webhook. Using timestamp '{signal_id}' as fallback.")
+            
+            client_order_id = f"tv_{symbol.lower()}_{action.replace(' ', '')}_{signal_id}"[:48]
+            print(f"🔑 Client Order ID: {client_order_id}")
 
             # 2) Asset check
             asset = requests.get(f"{ALPACA_BASE_URL}/v2/assets/{symbol}", headers=HEADERS, timeout=10)
-            print(f"📈 Asset: {asset.status_code} - {asset.text}")
-            if asset.status_code >= 300:
-                return jsonify({"status": "error", "message": "Asset lookup failed", "alpaca": asset.text}), 400
-            a = asset.json()
-            if not a.get("tradable", False):
+            if not asset.ok:
+                return jsonify({"status": "error", "message": f"Asset {symbol} not found", "alpaca": asset.text}), 400
+            asset_j = asset.json()
+            if not asset_j.get("tradable", False):
                 return jsonify({"status": "error", "message": f"{symbol} not tradable", "alpaca": asset.text}), 400
-            if action == "short entry" and not a.get("shortable", False):
-                return jsonify({"status": "error", "message": f"{symbol} not shortable or account not permitted"}), 400
-
+            if action == "short entry" and not asset_j.get("shortable", False):
+                return jsonify({"status": "error", "message": f"{symbol} not shortable"}), 400
+            
             # 3) Market clock
             clock = requests.get(f"{ALPACA_BASE_URL}/v2/clock", headers=HEADERS, timeout=10)
-            print(f"🕒 Clock: {clock.status_code} - {clock.text}")
-            is_open = (clock.status_code < 300 and clock.json().get("is_open") is True)
+            is_open = clock.ok and clock.json().get("is_open", False)
 
             side = "buy" if action == "long entry" else "sell"
             order_payload = {
@@ -129,7 +150,8 @@ def webhook():
                 "side": side,
                 "type": "market",
                 "time_in_force": "day",
-                "extended_hours": not is_open   # allow fills outside RTH
+                "extended_hours": not is_open,
+                "client_order_id": client_order_id  # Idempotency key
             }
 
             print(f"🧾 Alpaca ENTRY payload: {order_payload}")
@@ -141,7 +163,7 @@ def webhook():
             return jsonify({"status": "ok", "action": action, "alpaca": resp.json()}), 200
 
         elif action in ("exit long", "exit short", "exit"):
-            # Always attempt to close the whole position
+            # Always attempt to close the whole position for the given symbol
             print(f"🧾 Alpaca CLOSE position: {symbol}")
             resp = requests.delete(f"{ALPACA_BASE_URL}/v2/positions/{symbol}", headers=HEADERS, timeout=10)
             print(f"🟦 Alpaca CLOSE resp: {resp.status_code} - {resp.text}")
@@ -149,7 +171,7 @@ def webhook():
                 return jsonify({"status": "error", "message": "Alpaca close rejected", "alpaca": resp.text}), 400
             return jsonify({"status": "ok", "action": action, "alpaca": resp.json()}), 200
 
-        return jsonify({"status": "error", "message": f"Unknown signal: {action}"}), 400
+        return jsonify({"status": "error", "message": f"Unknown action: {action}"}), 400
 
     except Exception as e:
         print(f"❌ Exception: {e}")
@@ -161,4 +183,4 @@ def healthz():
 
 if __name__ == "__main__":
     print("🚀 Flask server is starting at http://localhost:5000")
-    app.run(host="0.0.0.0", port=5000)
+    app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)))
