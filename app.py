@@ -9,7 +9,7 @@ app.url_map.strict_slashes = False  # accept /webhook and /webhook/
 # === Config (env first; set these in Render) ===
 ALPACA_API_KEY       = os.getenv("ALPACA_API_KEY",              "YOUR_ALPACA_API_KEY")
 ALPACA_SECRET_KEY    = os.getenv("ALPACA_SECRET_KEY",           "YOUR_ALPACA_SECRET_KEY")
-ALPACA_BASE_URL      = os.getenv("ALPACA_BASE_URL",             "https://paper-api.alpaca.markets")  # no /v2 here
+ALPACA_BASE_URL      = os.getenv("ALPACA_BASE_URL",             "https://paper-api.alpaca.markets")
 GS_WEBHOOK_URL       = os.getenv("GOOGLE_SHEETS_WEBHOOK_URL",   "https://script.google.com/macros/s/REPLACE_ME/exec")
 TRADE_RISK_PERCENT   = float(os.getenv("TRADE_RISK_PERCENT", "1.0")) # Risk 1% of buying power per trade
 
@@ -97,14 +97,13 @@ def webhook():
         if action in ("long entry", "short entry"):
             # 1) Account check
             acct = requests.get(f"{ALPACA_BASE_URL}/v2/account", headers=HEADERS, timeout=10)
-            print(f"👤 Account: {acct.status_code} - {acct.text}")
-            if acct.status_code >= 300:
+            if not acct.ok:
                 return jsonify({"status": "error", "message": "Account check failed", "alpaca": acct.text}), 400
             acct_j = acct.json()
             if acct_j.get("status") != "ACTIVE" or acct_j.get("trading_blocked") or acct_j.get("account_blocked"):
                 return jsonify({"status": "error", "message": "Account not allowed to trade", "alpaca": acct.text}), 400
             
-            # === NEW: Dynamic Quantity Calculation ===
+            # === Dynamic Quantity Calculation ===
             try:
                 price = float(price_str)
                 buying_power = float(acct_j.get("buying_power", 0))
@@ -120,9 +119,8 @@ def webhook():
             if qty <= 0:
                 return jsonify({"status": "ok", "message": f"Calculated quantity is {qty}. No order placed."}), 200
 
-            # === NEW: Idempotency Key ===
+            # === Idempotency Key ===
             if not signal_id:
-                # Fallback to current timestamp if not provided, but less reliable
                 signal_id = str(int(time.time()))
                 print(f"⚠️ Missing 'signal_id' from webhook. Using timestamp '{signal_id}' as fallback.")
             
@@ -139,25 +137,32 @@ def webhook():
             if action == "short entry" and not asset_j.get("shortable", False):
                 return jsonify({"status": "error", "message": f"{symbol} not shortable"}), 400
             
-            # 3) Market clock
+            # 3) Market clock & Order Logic
             clock = requests.get(f"{ALPACA_BASE_URL}/v2/clock", headers=HEADERS, timeout=10)
             is_open = clock.ok and clock.json().get("is_open", False)
 
             side = "buy" if action == "long entry" else "sell"
+            
             order_payload = {
                 "symbol": symbol,
                 "qty": str(qty),
                 "side": side,
-                "type": "market",
                 "time_in_force": "day",
-                "extended_hours": not is_open,
-                "client_order_id": client_order_id  # Idempotency key
+                "client_order_id": client_order_id
             }
+
+            if is_open:
+                # During market hours, send a simple market order
+                order_payload["type"] = "market"
+            else:
+                # Outside market hours, send a limit order to participate in extended hours
+                order_payload["type"] = "limit"
+                order_payload["limit_price"] = str(price)
+                order_payload["extended_hours"] = True
 
             print(f"🧾 Alpaca ENTRY payload: {order_payload}")
             resp = requests.post(f"{ALPACA_BASE_URL}/v2/orders", json=order_payload, headers=HEADERS, timeout=15)
-            print(f"🟦 Alpaca ENTRY resp: {resp.status_code} - {resp.text}")
-            if resp.status_code >= 300:
+            if not resp.ok:
                 return jsonify({"status": "error", "message": "Alpaca entry rejected", "alpaca": resp.text}), 400
 
             return jsonify({"status": "ok", "action": action, "alpaca": resp.json()}), 200
@@ -166,8 +171,7 @@ def webhook():
             # Always attempt to close the whole position for the given symbol
             print(f"🧾 Alpaca CLOSE position: {symbol}")
             resp = requests.delete(f"{ALPACA_BASE_URL}/v2/positions/{symbol}", headers=HEADERS, timeout=10)
-            print(f"🟦 Alpaca CLOSE resp: {resp.status_code} - {resp.text}")
-            if resp.status_code >= 300:
+            if not resp.ok:
                 return jsonify({"status": "error", "message": "Alpaca close rejected", "alpaca": resp.text}), 400
             return jsonify({"status": "ok", "action": action, "alpaca": resp.json()}), 200
 
