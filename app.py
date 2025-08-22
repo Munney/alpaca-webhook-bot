@@ -2,16 +2,17 @@ from flask import Flask, request, jsonify
 import requests
 import os
 import time
+import math # <-- ADD THIS LINE
 
 app = Flask(__name__)
-app.url_map.strict_slashes = False  # accept /webhook and /webhook/
+app.url_map.strict_slashes = False
 
 # === Config (env first; set these in Render) ===
 ALPACA_API_KEY       = os.getenv("ALPACA_API_KEY",              "YOUR_ALPACA_API_KEY")
 ALPACA_SECRET_KEY    = os.getenv("ALPACA_SECRET_KEY",           "YOUR_ALPACA_SECRET_KEY")
 ALPACA_BASE_URL      = os.getenv("ALPACA_BASE_URL",             "https://paper-api.alpaca.markets")
-GS_WEBHOOK_URL       = os.getenv("GOOGLE_SHEETS_WEBHOOK_URL",   "https://script.google.com/macros/s/AKfycbxxgsWbBcVst2S3DaO1hxMjPs85Zun1hz5ZyZ-YKUjOV4NxfK0DRrP2AYirXfh1X_HtJg/exec")
-TRADE_RISK_PERCENT   = float(os.getenv("TRADE_RISK_PERCENT", "1.0")) # Risk 1% of buying power per trade
+GS_WEBHOOK_URL       = os.getenv("GOOGLE_SHEETS_WEBHOOK_URL",   "https://script.google.com/macros/s/REPLACE_ME/exec")
+TRADE_RISK_PERCENT   = float(os.getenv("TRADE_RISK_PERCENT", "1.0"))
 
 HEADERS = {
     "APCA-API-KEY-ID": ALPACA_API_KEY,
@@ -30,7 +31,6 @@ def root():
     return "✅ Alpaca Webhook Bot is live!", 200
 
 def normalize_alert(s: str) -> str:
-    """Map whatever TV sends to our four actions."""
     if not s:
         return ""
     s = s.replace("_", " ").strip().lower()
@@ -47,7 +47,6 @@ def normalize_alert(s: str) -> str:
     return s
 
 def side_for_sheet(action: str) -> str:
-    """Side we log to Sheets (READABLE, not the Alpaca side)."""
     return (
         "BUY"   if action in ("long entry", "exit short") else
         "SELL"  if action in ("short entry", "exit long") else
@@ -70,7 +69,7 @@ def webhook():
         timeframe = str(data.get("timeframe", ""))
         version   = str(data.get("version") or data.get("strategy") or "")
         price_str = str(data.get("price", "0"))
-        signal_id = str(data.get("signal_id", "")) # For idempotency
+        signal_id = str(data.get("signal_id", ""))
         alert_raw = (data.get("alert") or data.get("signal") or "").strip()
         action    = normalize_alert(alert_raw)
 
@@ -103,20 +102,32 @@ def webhook():
             if acct_j.get("status") != "ACTIVE" or acct_j.get("trading_blocked") or acct_j.get("account_blocked"):
                 return jsonify({"status": "error", "message": "Account not allowed to trade", "alpaca": acct.text}), 400
             
-            # === Dynamic Quantity Calculation ===
+            # === Dynamic Quantity Calculation (UPDATED) ===
             try:
                 price = float(price_str)
                 buying_power = float(acct_j.get("buying_power", 0))
                 trade_value = buying_power * (TRADE_RISK_PERCENT / 100.0)
                 if price <= 0:
                     return jsonify({"status": "error", "message": f"Invalid price for calculation: {price}"}), 400
-                qty = round(trade_value / price, 6) # Fractional shares are supported
+                
+                # Calculate the raw fractional quantity
+                qty_fractional = trade_value / price
+                
+                if action == "short entry":
+                    # Short sales must be whole shares (round down).
+                    qty = math.floor(qty_fractional)
+                else:
+                    # Long entries can be fractional.
+                    qty = round(qty_fractional, 6)
+
                 print(f"💰 Calculated Quantity: {qty} of {symbol} @ ${price} (Risk: {TRADE_RISK_PERCENT}%)")
             except (ValueError, ZeroDivisionError) as e:
                 print(f"⚠️ Qty calc error: {e}")
                 return jsonify({"status": "error", "message": "Failed to calculate quantity"}), 400
 
-            if qty <= 0:
+            if qty < 1 and action == "short entry":
+                return jsonify({"status": "ok", "message": f"Calculated quantity is less than 1. No short order placed."}), 200
+            elif qty <= 0:
                 return jsonify({"status": "ok", "message": f"Calculated quantity is {qty}. No order placed."}), 200
 
             # === Idempotency Key ===
@@ -152,10 +163,8 @@ def webhook():
             }
 
             if is_open:
-                # During market hours, send a simple market order
                 order_payload["type"] = "market"
             else:
-                # Outside market hours, send a limit order to participate in extended hours
                 order_payload["type"] = "limit"
                 order_payload["limit_price"] = str(price)
                 order_payload["extended_hours"] = True
@@ -168,7 +177,6 @@ def webhook():
             return jsonify({"status": "ok", "action": action, "alpaca": resp.json()}), 200
 
         elif action in ("exit long", "exit short", "exit"):
-            # Always attempt to close the whole position for the given symbol
             print(f"🧾 Alpaca CLOSE position: {symbol}")
             resp = requests.delete(f"{ALPACA_BASE_URL}/v2/positions/{symbol}", headers=HEADERS, timeout=10)
             if not resp.ok:
