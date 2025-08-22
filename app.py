@@ -10,7 +10,7 @@ app.url_map.strict_slashes = False  # accept /webhook and /webhook/
 ALPACA_API_KEY       = os.getenv("ALPACA_API_KEY",              "YOUR_ALPACA_API_KEY")
 ALPACA_SECRET_KEY    = os.getenv("ALPACA_SECRET_KEY",           "YOUR_ALPACA_SECRET_KEY")
 ALPACA_BASE_URL      = os.getenv("ALPACA_BASE_URL",             "https://paper-api.alpaca.markets")
-GS_WEBHOOK_URL       = os.getenv("GOOGLE_SHEETS_WEBHOOK_URL",   "https://script.google.com/macros/s/AKfycbx-SO8QlqurzYSDtaCu0NtofAXzXyi0aZ6TtcnJhp_5tDtCf3iEvJ4Z7ikTcP8kqzg8/exec")
+GS_WEBHOOK_URL       = os.getenv("GOOGLE_SHEETS_WEBHOOK_URL",   "https://script.google.com/macros/s/AKfycbxxgsWbBcVst2S3DaO1hxMjPs85Zun1hz5ZyZ-YKUjOV4NxfK0DRrP2AYirXfh1X_HtJg/exec")
 TRADE_RISK_PERCENT   = float(os.getenv("TRADE_RISK_PERCENT", "1.0")) # Risk 1% of buying power per trade
 
 HEADERS = {
